@@ -1,0 +1,755 @@
+#!/bin/bash 
+export POSIXLY_CORRECT=yes
+
+# Function Definitions
+function validate_file() {
+    local file="$1"
+    local pattern="^[[:print:]]+;[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2};[A-Z]{3};-?[0-9]+\.[0-9]{4}$"
+
+    # Check if the file exists
+    if [ -e "$file" ]; then
+        # Determine if the file is compressed
+        if [[ "$file" == *.gz ]]; then
+            zcat "$file" | while IFS= read -r line; do
+                # Validate the format of the line against the specified pattern
+                if ! [[ $line =~ $pattern ]]; then
+                    echo "Error: Invalid format in line '$line' of file '$file'" >&2
+                    exit 1
+                fi
+            done
+        else
+            # File is uncompressed, read it directly
+            while IFS= read -r line; do
+                # Validate the format of the line against the specified pattern
+                if ! [[ $line =~ $pattern ]]; then
+                    echo "Error: Invalid format in line '$line' of file '$file'" >&2
+                    exit 1
+                fi
+            done < "$file"
+        fi
+    else
+        echo "Error: File '$file' does not exist" >&2
+        exit 1
+    fi
+}
+function user_check(){
+    local user="$1"
+    # Checko for       ASCII                        while space and semicolon
+    if [[ "$user" =~ ^[[:print:]]+$ && ! "$user" =~ [[:space:]\;] ]]; then
+        return 0  
+    else
+        echo "Error: Invalid username" >&2
+        exit 1
+    fi
+}
+function XTF_profit_check(){
+    if [[ -z "$XTF_PROFIT" ]]; then
+        # If not set, use default value of 20%
+        XTF_PROFIT=20
+    fi
+
+    # Ensure XTF_PROFIT is a non-negative integer
+    if ! [[ "$XTF_PROFIT" =~ ^[0-9]+$ ]]; then
+        XTF_PROFIT=20
+        #echo "Error XTF_PROFIT must be non-negative" >&2
+        #exit 1
+    fi
+}
+function validate_crypto() {
+    local crypto_code="$1"
+    local crypto_code_pattern="^[A-Z]{3}$"
+
+    if [[ "$crypto_code" =~ $crypto_code_pattern ]]; then
+        #echo "Valid crypto code: $crypto_code"
+        crypto_code=0
+    else
+        echo "Invalid Crypto: $crypto_code" >&2
+        exit 1
+    fi
+}
+function validate_date() {
+    # Validate the given date string
+    # $1: datetime in format YYYY-MM-DD HH:MM:SS
+
+    local datetime="$1"
+    local datetime_pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"   # Making sure it matches the pattern =>YYYY-MM-DD HH:MM:SS
+
+    if [[ "$datetime" =~ $datetime_pattern ]]; then
+        # Split the date and time parts
+        local date_part="${datetime%% *}"   # Get the part before the first space.
+        local time_part="${datetime##* }"   # Get the part after  the space. 
+
+        # Extract the year, month, and day
+        local year="${date_part%%-*}"   # Get the part before first -.
+        local month="${date_part#*-}"          
+        # The first line removes everything from the beginning of the string to the first hyphen (#*-). 
+        # The second line removes everything from the first character to the first -.
+        month="${month#0}"  # Remove leading zero if present
+        month="${month%%-*}"
+        local day="${date_part##*-}"     # Remove everything up to and including the last hyphen.
+
+        # Extract the hour, minute, and second
+        local hour="${time_part%%:*}"      # Same Logic like above.
+        hour="${hour#0}"            # Remove zero if its like 08:15:58
+        hour=$((10#$hour))      # Use arithmetic expansion to treat the hour as a decimal number
+        local minute="${time_part#*:}"
+        minute="${minute%%:*}"
+        local second="${time_part##*:}"
+
+        # Check if components are within valid ranges
+        if (( year >= 0 && year <= 9999 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+              hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 &&
+              second >= 0 && second <= 59 )); then
+            # Check if the year is a leap year
+            if (( month == 2 )); then
+                if (( (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 )); then
+                    if (( day > 29 )); then
+                        echo "Invalid date (days in February): $datetime" >&2
+                        exit 1
+                    fi
+                else
+                    if (( day > 28 )); then
+                        echo "Invalid date (days in February): $datetime" >&2
+                        exit 1
+                    fi
+                fi
+            elif (( (month == 4 || month == 6 || month == 9 || month == 11) && day > 30 )); then
+                echo "Invalid date (days in months where max is 30): $datetime" >&2
+                exit 1
+            fi
+        else
+            echo "Invalid date: $datetime" >&2
+            exit 1
+        fi
+    else
+        echo "Invalid format of date: $datetime" >&2
+        exit 1
+    fi
+}
+function help() {
+    echo "xtf [-h|--help] [FILTR] [PŘÍKAZ] UŽIVATEL LOG [LOG2 [...]"
+    echo "PŘÍKAZ může být jeden z: 
+    list=>výpis záznamů pro daného uživatele
+    list-currency=>výpis vyskytujících se měn
+    status=>výpis skutečného stavu účtu
+    profit=>výpis skutečného stavu účtu s vynosem
+    "
+    echo "FILTR může být kombinace následujících:
+    -a DATETIME=>after: jsou uvažovány pouze záznamy PO tomto datu a čase (bez něj). DATETIME je formátu YYYY-MM-DD HH:MM:SS.
+    -b DATETIME=>before: jsou uvažovány pouze záznamy PŘED tímto datem a časem (bez něj).
+    -c CURRENCY=>jsou uvažovány pouze záznamy odpovídající dané měně.
+    "
+    exit 0
+}
+function list() {
+    if [ $# -eq 0 ]; then
+        echo "Error: Too few arguments" >&2
+        exit 1
+    elif [ $# -eq 1 ]; then
+        echo "Error: Too few arguments" >&2
+        exit 1
+    else
+        user="$1"  # Usually the name to filter
+        shift  # Remove the first argument
+        user_check "$user"
+        for file in "$@"; do        # Loop which filters where .gz or .log is provided to  be processed by 'zcat' or 'cat', respectively
+            if [[ "$file" == *.gz ]]; then                  
+                if [ -e "$file" ]; then
+                    validate_file "$file"
+                    zcat "$file" | awk -F ';'  -v user="$user" '$1 == user {print}'
+                else
+                    echo "Error: File '$file' does not exist" >&2
+                    exit 1
+                fi
+            elif  [[ "$file" == *.log ]]; then              
+                if [ -e "$file" ]; then
+                    validate_file "$file"
+                    awk -F ';' -v user="$user" '$1 == user {print}' "$file"
+                else
+                    echo "Error: File '$file' does not exist" >&2
+                    exit 1
+                fi
+            else
+                echo "Error in passing arguments to list" >&2
+                exit 1
+            fi
+        done
+    fi
+}
+function list_currency() {
+    if [ $# -eq 0 ]; then
+        echo "Error: Too few arguments" >&2
+        exit 1
+    elif [ $# -eq 1 ]; then
+        echo "Error: Too few arguments" >&2
+        exit 1
+    else
+        user="$1"  # Usually the name to filter
+        shift  # Remove the first argument
+        user_check "$user"
+        for file in "$@"; do        # Loop which filters where .gz or .log is provided to  be processed by 'zcat' or 'cat', respectively
+            if [[ "$file" == *.gz ]]; then
+                if [ -e "$file" ]; then
+                    validate_file "$file"
+                    zcat "$file" | awk -F ';'  -v user="$user" '$1 == user {print $3}'      #| sort  | uniq
+                else
+                    echo "Error: File '$file' does not exist" >&2
+                    exit 1
+                fi
+            elif  [[ "$file" == *.log ]]; then
+                if [ -e "$file" ]; then
+                    validate_file "$file"
+                    awk -F ';'  -v user="$user" '$1 == user {print $3}' "$file"
+                else
+                    echo "Error: File '$file' does not exist" >&2
+                    exit 1
+                fi
+            else
+                echo "Error in passing arguments to list-currency" >&2
+                exit 1
+            fi
+        done | sort | uniq      # Sort after are processed
+    fi  
+}
+function status() {
+    local status_array=() # Declare to store the extracted data
+    if [ $# -lt 3 ]; then   # status "username" "file" the least amount of args
+        echo "Error in passing arguments to list" >&2
+        exit 1
+    else
+        user="$2"            # Extract the second argument, usually the name to filter
+        shift 2              # Remove the status and user argument from the argument list
+        user_check "$user"
+        for file in "$@"; do  # Loop through each remaining argument, which are file paths 
+            # After username, only files should be provided
+            if [[ "$file" == *.gz || "$file" == *.log ]]; then
+                if [ -e "$file" ]; then
+                    validate_file "$file"
+                    if [[ "$file" == *.gz ]]; then
+                        mapfile -t current_values < <(zcat "$file" | awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' )
+                    else
+                        mapfile -t current_values < <(awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' "$file" )
+                    fi
+                    status_array+=("${current_values[@]}")
+                else
+                    echo "Error: File '$file' does not exist" >&2
+                    exit 1
+                fi
+            else
+                echo "Error in passing arguments to status" >&2
+                exit 1
+            fi
+        done 
+    fi
+    #check for results
+    if [ -z "${status_array[*]}" ]; then
+        #echo "No results found for $user." >&2
+        exit 0
+    fi
+    # Declare an associative array named 'sums' to store sums for each crypto
+    declare -A sums
+    for value in "${status_array[@]}"; do
+        # Extract the first three characters as the crypto
+        crypto="${value:0:3}"
+        # Extract the remaining characters as the number
+        num="${value:3}"
+        if [[ -n "${sums[$crypto]}" ]]; then     # Check if the crypto is already in the 'sums' array
+            # add the current number to the existing sum using awk
+            sums["$crypto"]=$(awk "BEGIN {print ${sums["$crypto"]} + $num}")
+        else
+            # initialize the sum for the crypto
+            sums["$crypto"]=$num
+        fi
+    done
+    # Sort the currencies
+    mapfile -t sorted_keys <<< "$(printf '%s\n' "${!sums[@]}" | sort -k1.4,1.6)"
+    # Print
+    for crypto in "${sorted_keys[@]}"; do
+        if [[ -v sums[$crypto] ]]; then # check if variable exists
+            printf "%s : %.4f\n" "$crypto" "${sums[$crypto]}"
+        else
+            echo "Error: No data found for currency $crypto" >&2
+            exit 1
+        fi
+    done
+}
+function profit() {
+    local status_array=() # Declare to store the extracted data
+    if [ $# -lt 3 ]; then   # status "username" "file" the least amount of args
+        echo "Error in passing arguments to list" >&2
+        exit 1
+    else
+        user="$2"            # Extract the second argument, usually the name to filter
+        shift 2              # Remove the status and user argument from the argument list
+        user_check "$user"
+            for file in "$@"; do  # Loop through each remaining argument, which are file paths
+                # After username, only files should be provided
+                if [[ "$file" == *.gz || "$file" == *.log ]]; then
+                    if [ -e "$file" ]; then
+                    validate_file "$file"
+                    if [[ "$file" == *.gz ]]; then
+                        mapfile -t current_values < <(zcat "$file" | awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' )
+                    else
+                        mapfile -t current_values < <(awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' "$file" )
+                    fi
+                        status_array+=("${current_values[@]}")
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    echo "Error in passing arguments to list status" >&2
+                    exit 1
+                fi
+            done
+    fi
+    #check for results
+    if [ -z "${status_array[*]}" ]; then
+        exit 0
+    fi
+
+    # Declare an associative array named 'sums' to store sums for each crypto
+    declare -A sums
+    for value in "${status_array[@]}"; do
+        # Extract the first three characters as the crypto
+        crypto="${value:0:3}"
+        # Extract the remaining characters as the number
+        num="${value:3}"
+        if [[ -n "${sums[$crypto]}" ]]; then     # Check if the crypto is already in the 'sums' array
+            # add the current number to the existing sum using awk
+            sums["$crypto"]=$(awk "BEGIN {print ${sums["$crypto"]} + $num}")
+        else
+            # initialize the sum for the crypto
+            sums["$crypto"]=$num
+        fi
+    done
+    # Sort the currencies
+    mapfile -t sorted_keys <<< "$(printf '%s\n' "${!sums[@]}" | sort -k1.4,1.6)"
+    xtf_mul=$(echo "$XTF_PROFIT" | awk '{printf "%.4f", $1/100 + 1}')   #apply profit
+
+    # Printing in the required format and sorting by keys
+    for crypto in "${sorted_keys[@]}"; do
+        if [[ -v sums[$crypto] ]]; then # check if variable exists
+            if (( $(awk -v val="${sums[$crypto]}" 'BEGIN{print (val > 0)}') )); then
+                echo "$crypto $xtf_mul ${sums[$crypto]}" | awk '{crypto=$1; calculated=$3*$2; printf "%s : %.4f\n", crypto, calculated}'
+            else
+                printf "%s : %.4f\n" "$crypto" "${sums[$crypto]}"
+            fi
+        else
+            exit 0 # Nothing found :]
+        fi
+    done
+}
+function filtering() {
+    local filter_a
+    local filter_b
+    local filter_count=0
+    local filter_conditions=()
+    local i=1
+    while [ "$i" -le "$#" ]; do
+        case "${!i}" in
+            -a)
+                if [ -z "$filter_a" ]; then
+                    filter_count=$((filter_count + 1))
+                    i=$((i + 1))  # Move to the next argument
+                    next_arg="${!i}"
+                    validate_date "$next_arg"
+                    filter_conditions+=("$next_arg")
+                    filter_a="$next_arg"     
+                else
+                    echo "Error: Only one -a filter allowed." >&2
+                    exit 1
+                fi
+                ;;
+            -b)
+                if [ -z "$filter_b" ]; then
+                    filter_count=$((filter_count + 1))
+                    i=$((i + 1))  # Move to the next argument
+                    next_arg="${!i}"
+                    validate_date "$next_arg"
+                    filter_conditions+=("$next_arg")
+                    filter_b="$next_arg"
+                else
+                    echo "Error: Only one -b filter allowed." >&2
+                    exit 1
+                fi
+                ;;
+            -c)
+                filter_count=$((filter_count + 1))
+                i=$((i + 1))  # Move to the next argument
+                next_arg="${!i}"
+                validate_crypto "$next_arg"
+                filter_conditions+=("$next_arg") # WE save the filter also with / so that its prepared to be inserted into awk command
+                ;;
+            *)
+                break   # End of filters
+                ;;
+        esac
+        i=$((i + 1))  # Move to the next pair to filter
+    done
+    #beggining of awk com
+    awk_command="awk -F ';' '"   
+    # Iterate only date filters
+    first_iteration=false
+    for fil in "${filter_conditions[@]}"; do
+        # Append condition to awk_command
+        if [ "$first_iteration" = true ]; then
+            if [ "$filter_a" == "$fil" ]; then
+                awk_command+="( \$2 > \"$fil\" ) &&"
+                        first_iteration=true
+            elif [ "$filter_b" == "$fil" ]; then
+                awk_command+="( \$2 < \"$fil\" ) &&"
+                        first_iteration=true
+            fi
+        else
+            if [ "$filter_a" == "$fil" ]; then
+                awk_command+=" ( \$2 > \"$fil\" ) &&"
+            elif [ "$filter_b" == "$fil" ]; then
+                awk_command+=" ( \$2 < \"$fil\" ) &&"
+            fi
+        fi
+    done
+    awk_command+=" ("
+    # Iterate Currency filters
+    currency_filter=false
+    for fil in "${filter_conditions[@]}"; do
+        # Append condition to awk_command
+            if [[ "$filter_a" != "$fil" && "$filter_b" != "$fil" ]]; then
+                awk_command+=" ( \$3 == \"$fil\" ) ||"
+                currency_filter=true
+            fi
+    done
+    awk_command="${awk_command% ||*}"
+    if [ $currency_filter == true ]; then
+        awk_command+=") && ("
+    fi
+
+    # If there is something behind the filters
+    new_condition=$((filter_count * 2 ))
+    shift $new_condition
+    if [ $# -eq 0 ] ;then 
+        echo "Error no args after the filters" >&2
+        exit 1
+    fi
+    #What to do after filters
+case ${1,,} in
+    -h|-help )
+        echo "Error Cannot funtion help after filters" >&2
+        exit 1       # Cannot funtion help
+        ;;
+    list)
+        shift       # Remove the first argument
+        #START LIST
+        if [ $# -eq 0 ]; then
+            echo "Error in passing arguments to list" >&2
+            exit 1
+        else
+            for file in "$@"; do        # Loop which filters where .gz or .log is provided to  be processed by 'zcat' or 'cat', respectively
+                if [[ "$file" == *.gz && -n "$user" ]]; then                  
+                    if [ -e "$file" ]; then
+                        awk_command="zcat \"$file\" | $awk_command"
+                        awk_command+=" \$1 == \"$user\" )'"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                elif [[ "$file" == *.log && -n "$user" ]]; then             
+                    if [ -e "$file" ]; then
+                        awk_command+=" \$1 == \"$user\")'  $file"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    if [[ "$file" == *.gz ]] ;then
+                        awk_command="zcat \"$file\" | $awk_command)'"
+                        eval "$awk_command"
+                        exit 0
+                    elif [[ "$file" == *.log ]] ;then
+                        awk_command="cat \"$file\" | $awk_command)'"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                    user="$1"
+                    user_check "$user"
+                    fi
+                fi
+            done
+        fi
+        #END LIST
+        ;;
+    list-currency)
+        shift       # Remove the first argument
+        #START LIST-CURRENCY
+        if [ $# -eq 0 ]; then
+            echo "Error in passing arguments to list" >&2
+            exit 1
+        else
+            for file in "$@"; do        # Loop which filters where .gz or .log is provided to  be processed by 'zcat' or 'cat', respectively
+                if [[ "$file" == *.gz && -n "$user" ]]; then                  
+                    if [ -e "$file" ]; then
+                        awk_command="zcat \"$file\" | $awk_command"
+                        awk_command+=" \$1 == \"$user\" ) {print \$3} ' | uniq | sort"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                elif [[ "$file" == *.log && -n "$user" ]]; then             
+                    if [ -e "$file" ]; then
+                        awk_command+=" \$1 == \"$user\") {print \$3} '  $file | uniq | sort"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    if [[ "$file" == *.gz ]] ;then
+                        awk_command="zcat \"$file\" | $awk_command) {print \$3} ' | uniq | sort"
+                        eval "$awk_command"
+                        exit 0
+                    elif [[ "$file" == *.log ]] ;then
+                        awk_command="cat \"$file\" | $awk_command) {print \$3} ' | uniq | sort"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                    user="$1"
+                    user_check "$user"
+                    fi
+                fi
+            done
+        fi
+        #END LIST-CURRENCY
+        ;;
+    status)
+        #STATUS
+        local status_array=() # Declare to store the extracted data
+        if [ $# -lt 3 ]; then   # status "username" "file" the least amount of args
+            echo "Error in passing arguments to list" >&2
+            exit 1
+        else
+            user="$2"            # Extract the second argument, usually the name to filter
+            shift 2              # Remove the status and user argument from the argument list
+            user_check "$user"
+            for file in "$@"; do  # Loop through each remaining argument, which are file paths 
+                # After username, only files should be provided
+                if [[ "$file" == *.gz || "$file" == *.log ]]; then
+                    if [ -e "$file" ]; then
+                        validate_file "$file"
+                        if [[ "$file" == *.gz ]]; then
+                            tmp=$awk_command
+                            tmp+="  \$1 == \"$user\" ) { print \$3 \$4 }'"
+                            mapfile -t current_values < <(zcat "$file" | eval "$tmp" )
+                        else
+                            tmp=$awk_command
+                            tmp+="  \$1 == \"$user\" ) { print \$3 \$4 }' $file"
+                            mapfile -t current_values < <(eval "$tmp")
+                        fi
+                        status_array+=("${current_values[@]}")
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    echo "Error in passing arguments to status" >&2
+                    exit 1
+                fi
+            done 
+        fi
+        #check for results
+        if [ -z "${status_array[*]}" ]; then
+            #echo "No results found for $user." >&2
+            exit 0
+        fi
+        # Declare an associative array named 'sums' to store sums for each crypto
+        declare -A sums
+        for value in "${status_array[@]}"; do
+            # Extract the first three characters as the crypto
+            crypto="${value:0:3}"
+            # Extract the remaining characters as the number
+            num="${value:3}"
+            if [[ -n "${sums[$crypto]}" ]]; then     # Check if the crypto is already in the 'sums' array
+                # add the current number to the existing sum using awk
+                sums["$crypto"]=$(awk "BEGIN {print ${sums["$crypto"]} + $num}")
+            else
+                # initialize the sum for the crypto
+                sums["$crypto"]=$num
+            fi
+        done
+        # Sort the currencies
+        mapfile -t sorted_keys <<< "$(printf '%s\n' "${!sums[@]}" | sort -k1.4,1.6)"
+        # Print
+        for crypto in "${sorted_keys[@]}"; do
+            if [[ -v sums[$crypto] ]]; then # check if variable exists
+                printf "%s : %.4f\n" "$crypto" "${sums[$crypto]}"
+            else
+                echo "Error: No data found for currency $crypto" >&2
+                exit 1
+            fi
+        done
+        #STATUS END
+        ;;
+    profit)
+        XTF_profit_check
+        #profit "$@"      
+        local status_array=() # Declare to store the extracted data
+        if [ $# -lt 3 ]; then   # status "username" "file" the least amount of args
+            echo "Error in passing arguments to list" >&2
+            exit 1
+        else
+            user="$2"            # Extract the second argument, usually the name to filter
+            shift 2              # Remove the status and user argument from the argument list
+            user_check "$user"
+            for file in "$@"; do  # Loop through each remaining argument, which are file paths 
+                # After username, only files should be provided
+                if [[ "$file" == *.gz || "$file" == *.log ]]; then
+                    if [ -e "$file" ]; then
+                        validate_file "$file"
+                        if [[ "$file" == *.gz ]]; then
+                            tmp=$awk_command
+                            tmp+="  \$1 == \"$user\" ) { print \$3 \$4 }'"
+                            mapfile -t current_values < <(zcat "$file" | eval "$tmp" )
+                        else
+                            tmp=$awk_command
+                            tmp+="  \$1 == \"$user\" ) { print \$3 \$4 }' $file"
+                            mapfile -t current_values < <(eval "$tmp")
+                        fi
+                        status_array+=("${current_values[@]}")
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    echo "Error in passing arguments to status" >&2
+                    exit 1
+                fi
+            done 
+        fi
+        #check for results
+        if [ -z "${status_array[*]}" ]; then
+            #echo "No results found for $user." >&2
+            exit 0
+        fi
+
+        # Declare an associative array named 'sums' to store sums for each crypto
+        declare -A sums
+        for value in "${status_array[@]}"; do
+            # Extract the first three characters as the crypto
+            crypto="${value:0:3}"
+            # Extract the remaining characters as the number
+            num="${value:3}"
+            if [[ -n "${sums[$crypto]}" ]]; then     # Check if the crypto is already in the 'sums' array
+                # add the current number to the existing sum using awk
+                sums["$crypto"]=$(awk "BEGIN {print ${sums["$crypto"]} + $num}")
+            else
+                # initialize the sum for the crypto
+                sums["$crypto"]=$num
+            fi
+        done
+        # Sort the currencies
+        mapfile -t sorted_keys <<< "$(printf '%s\n' "${!sums[@]}" | sort -k1.4,1.6)"
+        xtf_mul=$(echo "$XTF_PROFIT" | awk '{printf "%.4f", $1/100 + 1}')   #apply profit
+
+        # Printing in the required format and sorting by keys
+        for crypto in "${sorted_keys[@]}"; do
+            if [[ -v sums[$crypto] ]]; then # check if variable exists
+                if (( $(awk -v val="${sums[$crypto]}" 'BEGIN{print (val > 0)}') )); then
+                    echo "$crypto $xtf_mul ${sums[$crypto]}" | awk '{crypto=$1; calculated=$3*$2; printf "%s : %.4f\n", crypto, calculated}'
+                else
+                    printf "%s : %.4f\n" "$crypto" "${sums[$crypto]}"
+                fi
+            else
+                exit 0 # Nothing found :]
+            fi
+        done
+        ;;
+    -a|-b|-c)
+        echo "Error in passing arguments to list" >&2
+        exit 1
+        ;;
+    *)  
+        #START LIST
+        if [ $# -eq 0 ]; then
+            echo "Error in passing arguments to list" >&2
+            exit 1
+        else
+            for file in "$@"; do        # Loop which filters where .gz or .log is provided to  be processed by 'zcat' or 'cat', respectively
+                if [[ "$file" == *.gz && -n "$user" ]]; then                  
+                    if [ -e "$file" ]; then
+                        awk_command+=" \$1 == \"$user\" )'"
+                        awk_command="zcat \"$file\" | $awk_command"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                elif [[ "$file" == *.log && -n "$user" ]]; then             
+                    if [ -e "$file" ]; then
+                        awk_command+=" \$1 == \"$user\")'  $file"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                        echo "Error: File '$file' does not exist" >&2
+                        exit 1
+                    fi
+                else
+                    if [[ "$file" == *.gz ]] ;then
+                        awk_command="zcat \"$file\" | $awk_command)'"
+                        eval "$awk_command"
+                        exit 0
+                    elif [[ "$file" == *.log ]] ;then
+                        awk_command="cat \"$file\" | $awk_command)'"
+                        eval "$awk_command"
+                        exit 0
+                    else
+                    user="$1"
+                    user_check "$user"
+                    fi
+                fi
+            done
+        fi
+        #END LIST
+        ;;
+esac
+}
+
+# Start of the program
+if [ $# -eq 0 ]
+  then list "$@"   # No Arguments were passed
+  exit 0
+fi
+
+case ${1,,} in
+    -h|--help )
+        help        # Calling funtion help
+        ;;
+    list)
+        shift       # Remove the first argument
+        list "$@"   # Calling list function - $@ sets all arguments available to function
+        ;;
+    list-currency)
+        shift
+        list_currency  "$@"
+        ;;
+    status)
+        status "$@"  
+        ;;
+    profit)
+        XTF_profit_check
+        profit "$@"
+        ;;
+    -a|-b|-c)
+        filtering "$@"
+        ;;
+    *)
+        list "$@"   # Argument is expected to be NAME
+esac
+#Unexpected Behaviour
+exit 1

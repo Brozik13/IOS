@@ -1,5 +1,6 @@
 #!/bin/bash 
 export POSIXLY_CORRECT=yes
+export LC_ALL=C
 
 # Function Definitions
 function validate_file() {
@@ -21,9 +22,9 @@ function validate_file() {
             # File is uncompressed, read it directly
             while IFS= read -r line; do
                 # Validate the format of the line against the specified pattern
-                if ! [[ $line =~ $pattern ]]; then
-                    echo "Error: Invalid format in line '$line' of file '$file'" >&2
-                    exit 1
+               if ! [[ $line =~ $pattern ]]; then
+                   echo "Error: Invalid format in line '$line' of file '$file'" >&2
+                   exit 1
                 fi
             done < "$file"
         fi
@@ -227,6 +228,16 @@ function status() {
                     validate_file "$file"
                     if [[ "$file" == *.gz ]]; then
                         mapfile -t current_values < <(zcat "$file" | awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' )
+#                        current_values=()
+#                        # Read each line of the output from the command and store it in the array
+#                        while IFS= read -r line; do
+#                            current_values+=("$line")
+#                        done < <(
+#                            # Unzip the file and pass it to awk for processing
+#                            zcat "$file" |
+#                            # Filter lines based on the user and print relevant fields
+#                            awk -F ';' -v user="$user" '$1 == user { print $3 $4 }'
+#                        )
                     else
                         mapfile -t current_values < <(awk -F ';' -v user="$user" '$1 == user { print $3 $4 }' "$file" )
                     fi
@@ -719,7 +730,7 @@ case ${1,,} in
         ;;
 esac
 }
-
+# Function Definitions END
 # Start of the program
 if [ $# -eq 0 ]
   then list "$@"   # No Arguments were passed
@@ -751,5 +762,5 @@ case ${1,,} in
     *)
         list "$@"   # Argument is expected to be NAME
 esac
-#Unexpected Behaviour
-exit 1
+
+exit 0

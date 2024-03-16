@@ -284,6 +284,10 @@ fi
 args=("-a" "2024-01-21 15:29:29" "status" "Trader1" "cryptoexchange.log")
 run_test "ETH : 10.9537" "${args[@]}"
 
+# 24
+args=("-a" "2023-01-21 15:29:29" "list-currency" "Trader1" "cryptoexchange.log" "cryptoexchange-2.log.gz")
+run_test "ETH" "${args[@]}"
+
 # 25
 args=("-b" "2024-01-21 15:29:29" "status" "Trader1" "cryptoexchange.log")
 run_test "ETH : 1.9417

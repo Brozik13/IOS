@@ -406,7 +406,7 @@ function filtering() {
         # Append condition to awk_command
         if [ "$first_iteration" = true ]; then
             if [ "$filter_a" == "$fil" ]; then
-                awk_command+="( \$2 > \"$fil\" ) &&"
+                awk_command+="( \$2 > \"$fil\" ) &&"  #Appending awk command to look like "awk -F ';' ' (filter) && " 
                         first_iteration=true
             elif [ "$filter_b" == "$fil" ]; then
                 awk_command+="( \$2 < \"$fil\" ) &&"
@@ -420,7 +420,7 @@ function filtering() {
             fi
         fi
     done
-    awk_command+=" ("
+    awk_command+=" ("       #Creating Big bracket to have OR between the currency filters
     # Iterate Currency filters
     currency_filter=false
     for fil in "${filter_conditions[@]}"; do
@@ -432,7 +432,7 @@ function filtering() {
     done
     awk_command="${awk_command% ||*}"
     if [ $currency_filter == true ]; then
-        awk_command+=") && ("
+        awk_command+=") && ("           #Closing brackets from previous IF currecy was proccesed and creating new one for AND operation
     fi
 
     # If there is something behind the filters

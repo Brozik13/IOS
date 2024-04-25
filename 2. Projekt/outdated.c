@@ -10,6 +10,7 @@
 #include <semaphore.h>
 #include <ctype.h>
 #include <sys/mman.h>
+#include <bits/mman-linux.h>
 
 #define WPAUSE 10
 #define NUMOFSERVICES 3

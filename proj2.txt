@@ -15,7 +15,6 @@
 
 FILE *file;
 sem_t *main_process;
-sem_t *access_A;
 #define EXPECTED_ARGS 6
 
 int arg_check(int arg, int i){
@@ -80,7 +79,7 @@ int selection(int upper, int lower){
     return rand() %(upper - lower + 1) + lower;
 }
 
-void Fnc_sem_init(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int **on_bus){
+void Fnc_sem_init(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int *A, int *on_bus){
     //mainPROCCES
     main_process =  mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
     sem_init(main_process, 1, 1);
@@ -93,14 +92,11 @@ void Fnc_sem_init(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int **
     for(int i = 1; i < L; i++){
         lyzar[i] =  mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
         sem_init(lyzar[i], 1, 0);
-    }       
+    }
     // A a on_bus
-    access_A = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, -1, 0);
-    sem_init(access_A, 1, 1); 
-    *A =  mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
-    **A = 1;
-    *on_bus =  mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
-    **on_bus = 0;
+    A =  mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
+    on_bus =  mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
+
 }
 
 void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int *A, int *on_bus){
@@ -118,8 +114,6 @@ void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int *A, int 
         sem_destroy(lyzar[i]);
     }
     // A a on_bus
-    munmap(access_A, sizeof(sem_t));
-    sem_destroy(access_A);
     munmap(A, sizeof(int)); 
     munmap(on_bus, sizeof(int)); 
 }
@@ -137,30 +131,14 @@ void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int
     • Vypíše: A: L idL: going to ski
     • Proces končí*/
     //start
-    sem_wait(access_A);
     printf("%d: L %d: started\n", (*A)++, idL);
-    sem_post(access_A);
     //breakfast
-    usleep(selection(TL, TL/2));
+    usleep(selection(TL, 0));
     //prideleni zastavky
-    int Zastavka_lyzare = selection(Z, Z/2);
-    sem_wait(access_A);
+    int Zastavka_lyzare = selection(Z, 0);
     printf("%d: L %d: arrived to %d\n", (*A)++, idL, Zastavka_lyzare);
-    sem_post(access_A);
     //cekani na bus
     sem_wait(skibus[Zastavka_lyzare]);
-    sem_wait(access_A);
-
-    //TODO
-    if (*on_bus < K) {
-        //nastupuje
-        (*on_bus)++; //nastoupil
-        printf("%d: L %d: boarding\n", (*A)++, idL);
-        sem_post(skibus[Zastavka_lyzare]);
-    } else {
-        printf("%d: L %d: bus is full\n", (*A)++, idL);
-    }
-    sem_post(access_A);
 
 
 }
@@ -181,55 +159,26 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[]) {
     • Jinak vypíše: A: BUS: finish
     • Proces končí*/
     //start
-    sem_wait(access_A);
     printf("%d: BUS: started\n", (*A)++);
-    sem_post(access_A);
     bool someone_waiting = true;
     while (someone_waiting == true) {
         //jede na zastavku
-        usleep(selection(TB, TB/2));
-        sem_wait(access_A);
+        usleep(selection(TB, 0));
         printf("%d: BUS: arrived to %d\n", (*A)++, idZ);
-        sem_post(access_A);
+
         //signal ze prijel na zastavku
         sem_post(main_process);
-        //ceka na vsechny lyzare
-
-        //TODO
+        
+        // Wait for all lyzars to board
         for (int i = 0; i < Z; i++) {
             sem_wait(skibus[idZ]);
         }
         
         // Leave the stop
-        sem_wait(access_A);
         printf("%d: BUS: leaving %d\n", (*A)++,  idZ);
-        sem_post(access_A);
         someone_waiting = false;
-
-
-
-
-
-
-
     }
-    sem_wait(access_A);
     printf("%d: finish", (*A)++);
-    sem_post(access_A);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 int main (int argc, char *argv[])
@@ -256,12 +205,12 @@ int main (int argc, char *argv[])
     int K = arg_res[3];          //kapacita
     int TL = arg_res[4];      //time to leave
     int TB = arg_res[5];       //time between
-    int *A = NULL;
-    int *on_bus = NULL;
+    int A = 1;
+    int *on_bus;
     setbuf(file, NULL); //turn off buffer
     sem_t *skibus[Z];
     sem_t *lyzar[L];
-    Fnc_sem_init(L, Z, skibus, lyzar, &A, &on_bus);
+    Fnc_sem_init(L, Z, skibus, lyzar, A, on_bus);
     
     //MAIN PROCESS START
     /*• Proces vytváří ihned po spuštění proces skibus.
@@ -271,9 +220,8 @@ int main (int argc, char *argv[])
     • Jakmile jsou tyto procesy ukončeny, ukončí se i hlavní proces s kódem (exit code) 0.*/
     //skibus
     pid_t skibus_pid = fork();
-    srand(time(NULL) ^ (getpid()<<16));
     if (skibus_pid == 0) {
-        skibus_process(A, 1, Z, TB, skibus); 
+        skibus_process(*A, 1, Z, TB, skibus); 
         exit(0);
     } else if (skibus_pid < 0) {
         fprintf(stderr, "fork error"); 
@@ -282,10 +230,9 @@ int main (int argc, char *argv[])
     //lyzari
         for (int i = 0; i < L; i++) {
         pid_t pid = fork();
-        srand(time(NULL) ^ (getpid()<<16));
         if (pid == 0) {
             //srand(getpid()); // Seed random number generator
-            lyzar_process(A, i + 1, rand() % Z, TL, Z, skibus, K, on_bus); 
+            lyzar_process(*A, i + 1, rand() % Z, TL, Z, skibus, K, on_bus); 
             exit(0);
         } else if (pid < 0) {
             fprintf(stderr, "fork error");
@@ -294,8 +241,9 @@ int main (int argc, char *argv[])
     }
 
 
-    wait(NULL);
-    Fnc_sem_destroy(L, Z, skibus, lyzar, &A, &on_bus);
+
+
+    Fnc_sem_destroy(L, Z, skibus, lyzar, A, on_bus);
     fclose(file);
     return 0;
 }

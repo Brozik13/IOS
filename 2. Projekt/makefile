@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -std=gnu99 -Wall -Wextra -pedantic
+CFLAGS = -std=gnu99 -Wall -Wextra -pedantic -Wno-unused-parameter -Wno-unused-but-set-variable
 SRCS = proj2.c
 OBJS = $(SRCS:.c=.o)
 EXEC = proj2

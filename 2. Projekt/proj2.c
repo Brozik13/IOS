@@ -12,10 +12,13 @@
 #include <ctype.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <time.h>
+
 
 FILE *file;
 sem_t *main_process;
 sem_t *access_A;
+sem_t *boarding_sem;
 #define EXPECTED_ARGS 6
 
 int arg_check(int arg, int i){
@@ -76,14 +79,14 @@ void parseArguments(int arg_res[], char *argv[], int expected_args) {
     }
 }
 
-int selection(int upper, int lower){
-    return rand() %(upper - lower + 1) + lower;
+int selection(int upper){
+    return (rand() % upper) + 1;
 }
 
 void Fnc_sem_init(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int **on_bus){
     //mainPROCCES
     main_process =  mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
-    sem_init(main_process, 1, 1);
+    sem_init(main_process, 1, 0);
     //skibuses
     for(int i = 1; i < Z; i++){
         skibus[i] =  mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
@@ -101,9 +104,12 @@ void Fnc_sem_init(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int **
     **A = 1;
     *on_bus =  mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
     **on_bus = 0;
+    //boarding sem
+    boarding_sem =  mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | 0x20, 0, 0); //MAP_ANONYMOUS for some reason my c debugger kept calling error on identifeir map anonymous so i wen to definition and it was this offset
+    sem_init(boarding_sem, 1, 0);
 }
 
-void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int *A, int *on_bus){
+void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int **on_bus){
     //mainproc
     munmap(main_process, sizeof(sem_t));
     sem_destroy(main_process);
@@ -120,11 +126,14 @@ void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int *A, int 
     // A a on_bus
     munmap(access_A, sizeof(sem_t));
     sem_destroy(access_A);
-    munmap(A, sizeof(int)); 
-    munmap(on_bus, sizeof(int)); 
+    munmap(*A, sizeof(int)); 
+    munmap(*on_bus, sizeof(int)); 
+    //boarding sem
+    munmap(boarding_sem, sizeof(sem_t));
+    sem_destroy(boarding_sem);
 }
 
-void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int K, int *on_bus) {
+void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int K, int *on_bus, sem_t *lyzar[]) {
     /*• Každý lyžař je jednoznačně identifikován číslem idL, 0<idL<=L
     • Po spuštění vypíše: A: L idL: started
     • Dojí snídani---čeká v intervalu <0,TL> mikrosekund.
@@ -140,32 +149,44 @@ void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int
     sem_wait(access_A);
     printf("%d: L %d: started\n", (*A)++, idL);
     sem_post(access_A);
-    //breakfast
-    usleep(selection(TL, TL/2));
-    //prideleni zastavky
-    int Zastavka_lyzare = selection(Z, Z/2);
+    usleep(selection(TL));    //breakfast
+    int Zastavka_lyzare = selection(Z);     //prideleni zastavky
     sem_wait(access_A);
-    printf("%d: L %d: arrived to %d\n", (*A)++, idL, Zastavka_lyzare);
+    printf("%d: L %d: arrived to %d\n", (*A)++, idL, Zastavka_lyzare); //dosel na zastavku
+    sem_post(lyzar[Zastavka_lyzare]);
     sem_post(access_A);
-    //cekani na bus
-    sem_wait(skibus[Zastavka_lyzare]);
-    sem_wait(access_A);
 
-    //TODO
-    if (*on_bus < K) {
-        //nastupuje
-        (*on_bus)++; //nastoupil
-        printf("%d: L %d: boarding\n", (*A)++, idL);
-        sem_post(skibus[Zastavka_lyzare]);
-    } else {
-        printf("%d: L %d: bus is full\n", (*A)++, idL);
-    }
+
+        sem_wait(skibus[Zastavka_lyzare]);
+
+
+
+            sem_wait(access_A);
+            printf("%d: L %d: boarding\n", (*A)++, idL);
+            sem_post(access_A);
+            (*on_bus)++;
+            sem_wait(lyzar[Zastavka_lyzare]);//dekrementace lyzaru na zastavce
+
+
+
+            //cekani na posledniho
+            int posledni = 0;
+            sem_getvalue(lyzar[Zastavka_lyzare], &posledni);
+            if (posledni == 0){
+                sem_post(boarding_sem);
+            }
+
+
+    sem_wait(main_process);
+    sem_wait(access_A);
+    printf("%d: L %d: going to ski\n", (*A)++, idL);
     sem_post(access_A);
+    (*on_bus)--;
 
 
 }
 
-void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[]) {
+void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int *on_bus, int L, int idL[], sem_t *lyzar[]) {
     /*• Po spuštění vypíše: A: BUS: started
     • (#) idZ=1 (identifikace zastávky)
     • (*) Jede na zastávku idZ---čeká pomocí volání usleep náhodný čas v intervalu <0,TB>.
@@ -184,52 +205,86 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[]) {
     sem_wait(access_A);
     printf("%d: BUS: started\n", (*A)++);
     sem_post(access_A);
-    bool someone_waiting = true;
-    while (someone_waiting == true) {
-        //jede na zastavku
-        usleep(selection(TB, TB/2));
-        sem_wait(access_A);
-        printf("%d: BUS: arrived to %d\n", (*A)++, idZ);
-        sem_post(access_A);
-        //signal ze prijel na zastavku
-        sem_post(main_process);
-        //ceka na vsechny lyzare
+    int pom;
+    int zbyvajici = 1;//abych vesel do whilu
+    //sem_getvalue(main_process, &main_process_value);
+    while (zbyvajici > 0)
+    {
+        zbyvajici = 0;
+        idZ=1;
+        while (idZ <= Z) {
+            //jede na zastavku
+            usleep(selection(TB));
+            sem_wait(access_A);
+            printf("%d: BUS: arrived to %d\n", (*A)++, idZ);
+            sem_post(access_A);
+            
 
-        //TODO
-        for (int i = 0; i < Z; i++) {
-            sem_wait(skibus[idZ]);
+
+            int on_bus_now = (*on_bus);
+            //Nechá nastoupit všechny čekající lyžaře do kapacity autobusu
+            for (int i = 1; i < Z-on_bus_now; i++)
+            {
+                sem_post(skibus[idZ]);
+            }
+            
+
+
+            //todo wait aby vsichni nastoupili-------------------------------
+            int prazdnazastavka;
+            sem_getvalue(lyzar[idZ], &prazdnazastavka);
+            if(prazdnazastavka != 0){
+                sem_wait(boarding_sem);
+            }
+
+            //resetnu posty na zastavku
+            int reset;
+            sem_getvalue(skibus[idZ], &reset);
+            for (int i = 1; i < reset; i++)
+            {
+                sem_wait(skibus[idZ]);
+            }
+
+
+            sem_wait(access_A);
+            printf("%d: BUS: leaving %d\n", (*A)++, idZ);
+            sem_post(access_A);
+
+            idZ++;
         }
-        
-        // Leave the stop
         sem_wait(access_A);
-        printf("%d: BUS: leaving %d\n", (*A)++,  idZ);
+        printf("%d: BUS: arrived to final\n", (*A)++);
         sem_post(access_A);
-        someone_waiting = false;
+
+        //necham vystoupit--------------------------------
+        int clearbus = (*on_bus);
+        while(clearbus != 0){
+            sem_post(main_process);
+            clearbus--;
+        }
 
 
+        //vystoupili vsichni?
 
+        sem_wait(access_A);
+        printf("%d: BUS: leaving final\n", (*A)++);
+        sem_post(access_A);
 
-
-
+        for (int j = 1; j <= Z; j++)//mam jet znovu ? 
+        {
+            sem_getvalue(lyzar[j], &pom);
+            printf("%d\n", pom);
+            zbyvajici+=pom;
+            printf("%d\n", zbyvajici);
+        }
 
     }
+
+
+    // All stops have been visited, so the process finishes
     sem_wait(access_A);
-    printf("%d: finish", (*A)++);
+    printf("%d: BUS: finish\n", (*A)++);
     sem_post(access_A);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 int main (int argc, char *argv[])
@@ -262,7 +317,8 @@ int main (int argc, char *argv[])
     sem_t *skibus[Z];
     sem_t *lyzar[L];
     Fnc_sem_init(L, Z, skibus, lyzar, &A, &on_bus);
-    
+    srand(time(NULL)); //random numbers
+    srand(time(NULL) ^ (getpid()<<16));
     //MAIN PROCESS START
     /*• Proces vytváří ihned po spuštění proces skibus.
     • Dále vytvoří L procesů lyžařů.
@@ -271,9 +327,9 @@ int main (int argc, char *argv[])
     • Jakmile jsou tyto procesy ukončeny, ukončí se i hlavní proces s kódem (exit code) 0.*/
     //skibus
     pid_t skibus_pid = fork();
-    srand(time(NULL) ^ (getpid()<<16));
+
     if (skibus_pid == 0) {
-        skibus_process(A, 1, Z, TB, skibus); 
+        skibus_process(A, 1, Z, TB, skibus, K, on_bus, L, idL, lyzar); 
         exit(0);
     } else if (skibus_pid < 0) {
         fprintf(stderr, "fork error"); 
@@ -285,7 +341,7 @@ int main (int argc, char *argv[])
         srand(time(NULL) ^ (getpid()<<16));
         if (pid == 0) {
             //srand(getpid()); // Seed random number generator
-            lyzar_process(A, i + 1, rand() % Z, TL, Z, skibus, K, on_bus); 
+            lyzar_process(A, i + 1, rand() % Z, TL, Z, skibus, K, on_bus, lyzar); 
             exit(0);
         } else if (pid < 0) {
             fprintf(stderr, "fork error");

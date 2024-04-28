@@ -36,6 +36,7 @@
   "C_Cpp_Runner.useAddressSanitizer": false,
   "files.associations": {
     "*.py": "python",
-    "windows.h": "c"
+    "windows.h": "c",
+    "fcntl.h": "c"
   }
 }

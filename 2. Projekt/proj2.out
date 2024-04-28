@@ -1,0 +1,13 @@
+1: BUS: started
+2: L 1: started
+3: L 2: started
+4: L 1: arrived to 2
+5: L 3: started
+6: BUS: arrived to 1
+7: BUS: leaving 1
+8: L 2: arrived to 2
+9: L 3: arrived to 2
+10: BUS: arrived to 2
+11: L 4: started
+12: L 4: arrived to 1
+13: L 4: boarding

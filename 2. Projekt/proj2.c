@@ -147,12 +147,12 @@ void lyzar_process(int *A, int idL, int TL, int Z, sem_t *skibus[], int *on_bus,
     • Proces končí*/
     //start
     sem_wait(access_A);
-    printf("%d: L %d: started\n", (*A)++, idL);
+    fprintf(file, "%d: L %d: started\n", (*A)++, idL);
     sem_post(access_A);
     usleep(selection(TL));    //breakfast
     int Zastavka_lyzare = selection(Z);     //prideleni zastavky
     sem_wait(access_A);
-    printf("%d: L %d: arrived to %d\n", (*A)++, idL, Zastavka_lyzare); //dosel na zastavku
+    fprintf(file, "%d: L %d: arrived to %d\n", (*A)++, idL, Zastavka_lyzare); //dosel na zastavku
     sem_post(lyzar[Zastavka_lyzare]);
     sem_post(access_A);
 
@@ -162,7 +162,7 @@ void lyzar_process(int *A, int idL, int TL, int Z, sem_t *skibus[], int *on_bus,
 
 
             sem_wait(access_A);
-            printf("%d: L %d: boarding\n", (*A)++, idL);
+            fprintf(file, "%d: L %d: boarding\n", (*A)++, idL);
             sem_post(access_A);
             (*on_bus)++;
             sem_wait(lyzar[Zastavka_lyzare]);//dekrementace lyzaru na zastavce
@@ -179,7 +179,7 @@ void lyzar_process(int *A, int idL, int TL, int Z, sem_t *skibus[], int *on_bus,
 
     sem_wait(main_process);
     sem_wait(access_A);
-    printf("%d: L %d: going to ski\n", (*A)++, idL);
+    fprintf(file, "%d: L %d: going to ski\n", (*A)++, idL);
     sem_post(access_A);
     (*on_bus)--;
 
@@ -203,7 +203,7 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
     • Proces končí*/
     //start
     sem_wait(access_A);
-    printf("%d: BUS: started\n", (*A)++);
+    fprintf(file, "%d: BUS: started\n", (*A)++);
     sem_post(access_A);
     int pom;
     int zbyvajici = 1;//abych vesel do whilu
@@ -216,7 +216,7 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
             //jede na zastavku
             usleep(selection(TB));
             sem_wait(access_A);
-            printf("%d: BUS: arrived to %d\n", (*A)++, idZ);
+            fprintf(file, "%d: BUS: arrived to %d\n", (*A)++, idZ);
             sem_post(access_A);
             
 
@@ -247,13 +247,13 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
 
 
             sem_wait(access_A);
-            printf("%d: BUS: leaving %d\n", (*A)++, idZ);
+            fprintf(file, "%d: BUS: leaving %d\n", (*A)++, idZ);
             sem_post(access_A);
 
             idZ++;
         }
         sem_wait(access_A);
-        printf("%d: BUS: arrived to final\n", (*A)++);
+        fprintf(file, "%d: BUS: arrived to final\n", (*A)++);
         sem_post(access_A);
 
         //necham vystoupit--------------------------------
@@ -267,15 +267,15 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
         //vystoupili vsichni?
 
         sem_wait(access_A);
-        printf("%d: BUS: leaving final\n", (*A)++);
+        fprintf(file, "%d: BUS: leaving final\n", (*A)++);
         sem_post(access_A);
 
         for (int j = 1; j <= Z; j++)//mam jet znovu ? 
         {
             sem_getvalue(lyzar[j], &pom);
-            printf("%d\n", pom);
+            //fprintf(file, "%d\n", pom);
             zbyvajici+=pom;
-            printf("%d\n", zbyvajici);
+            //fprintf(file, "%d\n", zbyvajici);
         }
 
     }
@@ -283,7 +283,7 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
 
     // All stops have been visited, so the process finishes
     sem_wait(access_A);
-    printf("%d: BUS: finish\n", (*A)++);
+    fprintf(file, "%d: BUS: finish\n", (*A)++);
     sem_post(access_A);
 }
 
@@ -291,6 +291,10 @@ int main (int argc, char *argv[])
 {
     file = fopen("proj2.out", "w");
     // checking arguments are valid START
+        if (file == NULL) {
+        fprintf(file, "Error opening file!\n");
+        return 1;
+    }
     int arg_res[EXPECTED_ARGS];
     if (!validateArguments(argc, argv, EXPECTED_ARGS)) {
         exit(1);

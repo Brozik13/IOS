@@ -133,7 +133,7 @@ void Fnc_sem_destroy(int L, int Z, sem_t *skibus[], sem_t *lyzar[], int **A, int
     sem_destroy(boarding_sem);
 }
 
-void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int K, int *on_bus, sem_t *lyzar[]) {
+void lyzar_process(int *A, int idL, int TL, int Z, sem_t *skibus[], int *on_bus, sem_t *lyzar[]) {
     /*• Každý lyžař je jednoznačně identifikován číslem idL, 0<idL<=L
     • Po spuštění vypíše: A: L idL: started
     • Dojí snídani---čeká v intervalu <0,TL> mikrosekund.
@@ -186,7 +186,7 @@ void lyzar_process(int *A, int idL, int idZ, int TL, int Z, sem_t *skibus[], int
 
 }
 
-void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int *on_bus, int L, int idL[], sem_t *lyzar[]) {
+void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int *on_bus, sem_t *lyzar[]) {
     /*• Po spuštění vypíše: A: BUS: started
     • (#) idZ=1 (identifikace zastávky)
     • (*) Jede na zastávku idZ---čeká pomocí volání usleep náhodný čas v intervalu <0,TB>.
@@ -223,7 +223,7 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
 
             int on_bus_now = (*on_bus);
             //Nechá nastoupit všechny čekající lyžaře do kapacity autobusu
-            for (int i = 1; i < Z-on_bus_now; i++)
+            for (int i = 1; i < K-on_bus_now; i++)
             {
                 sem_post(skibus[idZ]);
             }
@@ -237,13 +237,13 @@ void skibus_process(int *A, int idZ, int Z, int TB, sem_t *skibus[], int K, int 
                 sem_wait(boarding_sem);
             }
 
-            //resetnu posty na zastavku
+            /*resetnu posty na zastavku
             int reset;
             sem_getvalue(skibus[idZ], &reset);
             for (int i = 1; i < reset; i++)
             {
                 sem_wait(skibus[idZ]);
-            }
+            }*/
 
 
             sem_wait(access_A);
@@ -299,15 +299,15 @@ int main (int argc, char *argv[])
     parseArguments(arg_res, argv, EXPECTED_ARGS);
     // checking arguments are
     int L = arg_res[1];
-    int idL[L+1];
-    for (int i = 1; i<= L; i++) { //lyzari
-        idL[i]=i;
-    }
+    //int idL[L+1];
+    //for (int i = 1; i<= L; i++) { //lyzari
+    //    idL[i]=i;
+    //}
     int Z = arg_res[2];
-    int idZ[Z+1];
-    for (int i = 1; i<= Z; i++) { //zastavky
-        idZ[i]=i;
-    }
+    //int idZ[Z+1];
+    //for (int i = 1; i<= Z; i++) { //zastavky
+    //    idZ[i]=i;
+    //}
     int K = arg_res[3];          //kapacita
     int TL = arg_res[4];      //time to leave
     int TB = arg_res[5];       //time between
@@ -329,7 +329,7 @@ int main (int argc, char *argv[])
     pid_t skibus_pid = fork();
 
     if (skibus_pid == 0) {
-        skibus_process(A, 1, Z, TB, skibus, K, on_bus, L, idL, lyzar); 
+        skibus_process(A, 1, Z, TB, skibus, K, on_bus, lyzar); 
         exit(0);
     } else if (skibus_pid < 0) {
         fprintf(stderr, "fork error"); 
@@ -341,7 +341,7 @@ int main (int argc, char *argv[])
         srand(time(NULL) ^ (getpid()<<16));
         if (pid == 0) {
             //srand(getpid()); // Seed random number generator
-            lyzar_process(A, i + 1, rand() % Z, TL, Z, skibus, K, on_bus, lyzar); 
+            lyzar_process(A, i + 1, TL, Z, skibus, on_bus, lyzar); 
             exit(0);
         } else if (pid < 0) {
             fprintf(stderr, "fork error");
